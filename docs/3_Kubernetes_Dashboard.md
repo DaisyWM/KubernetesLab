@@ -195,3 +195,210 @@ This exercise strengthened my understanding of several important Kubernetes conc
 - Combining graphical tools with command-line management
 
 The Kubernetes Dashboard became a valuable tool throughout the remainder of this project, particularly when validating Harbor deployments and monitoring workloads running inside the cluster.
+
+---
+
+# Optional Enhancement: Username/Password Authentication
+
+## Why I Added This
+
+By default, the Kubernetes Dashboard requires users to authenticate using a ServiceAccount token.
+
+Although this works well, tokens generated using:
+
+```bash
+kubectl create token admin-user
+```
+
+expire after approximately one hour. This means a new token must be generated every time it expires, which becomes inconvenient during repeated testing.
+
+To improve the login experience for my lab environment, I implemented an **NGINX reverse proxy** that performs HTTP Basic Authentication before forwarding authenticated requests to the Kubernetes Dashboard.
+
+Instead of entering a Kubernetes token every time, I can simply log in with a username and password.
+
+> **Note**
+>
+> This solution is intended for learning and home lab environments only.
+>
+> Every authenticated user receives the permissions of the `admin-user` ServiceAccount (`cluster-admin`), so this approach should **not** be used in production. Production environments should integrate the Dashboard with an identity provider such as OIDC or LDAP.
+
+---
+
+# Architecture
+
+The authentication flow now looks like this:
+
+```text
+Browser
+    │
+Username + Password
+    │
+    ▼
+NGINX Reverse Proxy
+(Basic Authentication)
+    │
+Injects Kubernetes Bearer Token
+    │
+    ▼
+Kubernetes Dashboard
+    │
+    ▼
+Kubernetes API Server
+```
+
+The Dashboard itself still uses token authentication internally, but users no longer have to enter the token manually because the proxy injects it automatically.
+
+---
+
+# Creating a Long-Lived ServiceAccount Token
+
+The first step was creating a non-expiring ServiceAccount token.
+
+Unlike tokens generated using `kubectl create token`, this token is stored as a Kubernetes Secret and can be reused by the proxy.
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: admin-user-token
+  namespace: kubernetes-dashboard
+  annotations:
+    kubernetes.io/service-account.name: admin-user
+type: kubernetes.io/service-account-token
+EOF
+```
+
+---
+
+# Creating Username and Password Credentials
+
+The proxy protects access using HTTP Basic Authentication.
+
+I created an `htpasswd` file containing a username and password, then stored it as a Kubernetes Secret.
+
+```bash
+htpasswd -c auth admin
+
+kubectl create secret generic dashboard-basic-auth \
+  --from-file=auth \
+  -n kubernetes-dashboard
+```
+
+---
+
+# Deploying the Authentication Proxy
+
+The authentication proxy is deployed using a single Kubernetes manifest containing:
+
+- ConfigMap
+- Deployment
+- Service
+
+The Deployment starts an NGINX container that:
+
+- prompts users for a username and password
+- validates the credentials using Basic Authentication
+- injects the ServiceAccount token into every request
+- forwards authenticated requests to the Kubernetes Dashboard
+
+The complete manifest is included in this repository.
+
+```bash
+kubectl apply -f manifests/dashboard-basic-auth-proxy.yaml
+```
+
+---
+
+# Verifying the Deployment
+
+After deploying the proxy, I verified that it started successfully.
+
+```bash
+kubectl get pods -n kubernetes-dashboard | grep dashboard-proxy
+```
+
+I also confirmed that the ServiceAccount token had been injected correctly into the generated NGINX configuration.
+
+```bash
+kubectl exec -n kubernetes-dashboard \
+deploy/dashboard-proxy -- \
+cat /etc/nginx/conf.d/default.conf
+```
+
+The configuration should contain the ServiceAccount token instead of the `${TOKEN}` placeholder.
+
+---
+
+# Accessing the Dashboard
+
+The proxy exposes the Dashboard through a NodePort Service.
+
+```
+http://<node-ip>:31800
+```
+
+Instead of the Kubernetes token login screen, the browser first prompts for:
+
+- Username
+- Password
+
+After successful authentication, the Dashboard loads automatically without requiring the user to paste a Kubernetes token.
+
+---
+
+## Authentication Prompt
+
+The browser prompts for HTTP Basic Authentication before forwarding requests to the Dashboard.
+
+
+---
+
+## Dashboard After Login
+
+After entering the correct username and password, the Dashboard opens directly without displaying the Kubernetes token login page.
+
+---
+
+# Troubleshooting
+
+If the proxy could not be accessed, I verified the following:
+
+```bash
+kubectl get svc dashboard-proxy -n kubernetes-dashboard
+```
+
+```bash
+kubectl get pods -n kubernetes-dashboard
+```
+
+```bash
+kubectl logs -n kubernetes-dashboard deploy/dashboard-proxy
+```
+
+```bash
+kubectl get nodes -o wide
+```
+
+```bash
+curl http://localhost:31800
+```
+
+These checks helped verify that the proxy was running correctly and reachable from the cluster.
+
+---
+
+# What I Learned
+
+Implementing this authentication proxy helped me better understand how Kubernetes authentication works behind the scenes.
+
+Rather than modifying the Dashboard itself, I placed an NGINX reverse proxy in front of it to handle authentication and automatically inject the required Kubernetes bearer token.
+
+This exercise reinforced concepts around:
+
+- Kubernetes ServiceAccounts
+- Secrets
+- RBAC
+- Reverse proxies
+- HTTP Basic Authentication
+- NGINX configuration
