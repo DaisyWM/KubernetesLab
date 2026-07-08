@@ -137,8 +137,7 @@ After creating the Deployment and exposing it through a NodePort Service, I veri
 
 The output below confirms that the Deployment, ReplicaSet, Pods, and Service were all healthy.
 
-![Deployment Verification](../images/nginx-deployment-verification.png)
-
+![Deployment Verification](../images/nginx-pods-running.png)
 ---
 
 # Accessing the Application
