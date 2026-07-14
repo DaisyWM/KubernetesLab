@@ -108,8 +108,6 @@ The Grafana login page loaded successfully, confirming that the service was acce
 
 After authentication, I was able to access the monitoring dashboards.
 
-![Grafana Login](../images/grafana-login.png)
-
 ---
 
 # Exploring Grafana Dashboards
